@@ -42,9 +42,9 @@ mc.loops <- 10000
 
 #### Simulation of the underlying ####
 # Load the functions
-source(func_gbm)
-
-
+source("func_gbm.R")
+source("func_put_bsm.R")
+source("func_put_values.R")
 
 # Initialize price matrix for the different paths of our underlying
 prices <- matrix(nrow = N + 1, ncol = mc.loops)
@@ -54,20 +54,22 @@ for (i in 1:mc.loops) {
     prices[, i] <- gbm(S0 = S0, mu = mu, sigma = sigma, T = time, N = N)
 }
 
-# End Price and Returns
-asset_value_at_maturity <- prices[N+1, ]
-returns <- (prices[N+1, ] / S0) - 1
+
+# Calculate the End Price of the Underlying and the corresponding Returns
+asset_value_at_maturity <- prices[N + 1,]
+returns <- (prices[N + 1,] / S0) - 1
 returns <- tibble(returns)
 
-# Histogram of my retruns without portfolio insurance
+
+#### Histogram of Returns without Portfolio Insurance
 ggplot(returns, aes(returns)) +
     geom_histogram(bins = 200)
+
 
 
 #### Performance Measures ####
 
 # Value at Risk
-
 # Lowest Value of the annual relative returns that is not exceeded in 95% of cases.
 
 returns <- returns$returns
@@ -80,7 +82,7 @@ cat("VaR 95%:", round(var_95*100, 2), "%\n")
 cat("VaR 99%:", round(var_99*100, 2), "%\n")
 
 
-# Quartilsabstand (Interquartile Range)
+# Interquartile Range
 quartilsabstand <- quantile(returns, 0.75) - quantile(returns, 0.25)
 cat("Quartilsabstand:", quartilsabstand, "\n")
 
@@ -93,37 +95,18 @@ realized_vola <- sd(returns)
 cat("Realized Volatility:", realized_vola, "\n")
 
 # Sharpe Ratio
-r <- r_f  # Assuming the risk-free rate is 0 (you can replace it with the appropriate value)
+r <- r_f  # Assuming the risk-free rate is 0.1 (you can replace it with the appropriate value)
 sharpe_ratio <- (expected_return - r) / realized_vola
 cat("Sharpe Ratio:", sharpe_ratio, "\n")
 
 
 
 
-##### Exercise 8: Performance Analysis with risk managament ####----------------------
+#### Performance Analysis with risk Management ####
 # Same Params as before
 
-
-# Function to calculate the Black-Scholes put price
-black_scholes_put <- function(S0, K, T, r, vol) {
-    d1 <- (log(S0/K) + (r + (vol^2/2)) * T) / (vol * sqrt(T))
-    d2 <- d1 - vol * sqrt(T)
-    put_price <- (K * exp(-r * T) * pnorm(-d2)) - (S0 * pnorm(-d1))
-    return(put_price)
-}
-
-
-
-# Function to calculate the put values based on strike price and asset values
-calculate_put_values <- function(K, asset_values) {
-    strike_diff <- K - asset_values
-    put_values <- pmax(strike_diff, 0)
-    return(put_values)
-}
-
-
 # Parameter Strike Price
-K <- 1100
+K <- 110
 
 # Calculate the Put Price
 put_price <- black_scholes_put(S0, K, T, r_f, vol = sigma)
@@ -134,13 +117,15 @@ put_values <- calculate_put_values(K = K, asset_values = asset_value_at_maturity
 
 
 # Aggregate Information and Build a Portfolio
-invest <- 10000
-share_fraction <- 0.95
-put_fraction <- 1 - share_fraction
+# Share of investment into the underlying
+share_underlying <- 0.95
 
-# Number of Puts and MSCI I can buy
-n_shares <- invest * share_fraction / S0
-n_puts <- invest * put_fraction / put_price
+# Share invested into the Put-Options
+share_put <- 1 - share_underlying
+
+# Number of Puts and Underlying that can be bought
+n_shares <- invest * share_underlying / S0
+n_puts <- invest * share_put / put_price
 
 # Calculate the hedged portfolio returns
 hedged_portfolio_values <- (asset_value_at_maturity * n_shares + n_puts * put_values)
@@ -173,7 +158,7 @@ cat("Sharpe Ratio:", round(sharpe_ratio, 4), "\n")
 
 # Variable Initialization
 invest <- 10000
-share_fractions <- seq(0.01, 1.00, 0.01)
+share_underlyings <- seq(0.01, 1.00, 0.01)
 
 # Create an empty data frame to store results
 impact_fractions <- data.frame(
@@ -200,12 +185,12 @@ bs_put_price <- function(S0, K, r, vol, T) {
 }
 
 # Loop through different share fractions
-for (i in 1:length(share_fractions)) {
-    curr_share_fraction <- share_fractions[i]
-    curr_put_fraction <- 1 - curr_share_fraction
+for (i in 1:length(share_underlyings)) {
+    curr_share_underlying <- share_underlyings[i]
+    curr_share_put <- 1 - curr_share_underlying
     
-    curr_n_shares <- invest * curr_share_fraction / S0
-    curr_n_puts <- invest * curr_put_fraction / bs_put_price(S0, K, r_f, sigma, T)
+    curr_n_shares <- invest * curr_share_underlying / S0
+    curr_n_puts <- invest * curr_share_put / bs_put_price(S0, K, r_f, sigma, T)
     
     hedged_portfolio_values <- (curr_n_shares * asset_value_at_maturity + curr_n_puts * put_values)
     hedged_portfolio_returns <- (hedged_portfolio_values / invest) - 1
@@ -224,8 +209,8 @@ for (i in 1:length(share_fractions)) {
         "Strike Price" = K,
         "Share Price" = round(S0, 4),
         "Put Price" = round(bs_put_price(S0, K, r, sigma, T), 4),
-        "Share Fraction" = round(curr_share_fraction, 4),
-        "Put Fraction" = round(curr_put_fraction, 4),
+        "Share Fraction" = round(curr_share_underlying, 4),
+        "Put Fraction" = round(curr_share_put, 4),
         "N Shares" = round(curr_n_shares, 4),
         "N Puts" = round(curr_n_puts, 4),
         "VAR95" = round(var_95, 4),
@@ -278,8 +263,8 @@ for (i in 1:length(strikes)) {
     strike_diff <- K - asset_value_at_maturity
     put_values <- pmax(strike_diff, 0)
     
-    curr_n_shares <- invest * share_fraction / S0
-    curr_n_puts <- invest * put_fraction / put_price
+    curr_n_shares <- invest * share_underlying / S0
+    curr_n_puts <- invest * share_put / put_price
     
     hedged_portfolio_values <- (curr_n_shares * asset_value_at_maturity + curr_n_puts * put_values)
     hedged_portfolio_returns <- (hedged_portfolio_values / invest) - 1
@@ -299,8 +284,8 @@ for (i in 1:length(strikes)) {
         "Strike Price" = K,
         "Share Price" = round(S0, 4),
         "Put Price" = round(put_price, 4),
-        "Share Fraction" = round(share_fraction, 4),
-        "Put Fraction" = round(put_fraction, 4),
+        "Share Fraction" = round(share_underlying, 4),
+        "Put Fraction" = round(share_put, 4),
         "N Shares" = round(curr_n_shares, 4),
         "N Puts" = round(curr_n_puts, 4),
         "VAR95" = round(var_95, 4),
@@ -333,7 +318,7 @@ ggplot(impact_strikes, aes(x = `Strike.Price`, y = `Sharpe.Ratio`)) +
 
 N <- 252
 K <- 1200
-share_fraction <- 0.95
+share_underlying <- 0.95
 S0 <- data$Price[length(data$Price)]
 T <- 1
 
@@ -381,10 +366,10 @@ put_values <- calculate_put_values(K = K, asset_values = prices_scenario_1[N+1, 
 
 # Calculate number of shares and options according to investment amount, share fraction, and stock/put prices
 invest <- 10000
-share_fraction <- 0.95
-put_fraction <- 1 - share_fraction
-n_shares <- invest * share_fraction / S0
-n_puts <- invest * put_fraction / put_price
+share_underlying <- 0.95
+share_put <- 1 - share_underlying
+n_shares <- invest * share_underlying / S0
+n_puts <- invest * share_put / put_price
 asset_value_at_maturity <- prices_scenario_1[N+1,]
 
 # Calculate resulting portfolio values and relative returns
@@ -460,10 +445,10 @@ put_values <- calculate_put_values(K = K, asset_values = prices_scenario_2[N+1, 
 
 # Calculate number of shares and options according to investment amount, share fraction, and stock/put prices
 invest <- 10000
-share_fraction <- 0.95
-put_fraction <- 1 - share_fraction
-n_shares <- invest * share_fraction / S0
-n_puts <- invest * put_fraction / put_price
+share_underlying <- 0.95
+share_put <- 1 - share_underlying
+n_shares <- invest * share_underlying / S0
+n_puts <- invest * share_put / put_price
 asset_value_at_maturity <- prices_scenario_2[N+1,]
 
 # Calculate resulting portfolio values and relative returns
@@ -538,10 +523,10 @@ put_values <- calculate_put_values(K = K, asset_values = prices_scenario_3[N+1, 
 
 # Calculate number of shares and options according to investment amount, share fraction, and stock/put prices
 invest <- 10000
-share_fraction <- 0.95
-put_fraction <- 1 - share_fraction
-n_shares <- invest * share_fraction / S0
-n_puts <- invest * put_fraction / put_price
+share_underlying <- 0.95
+share_put <- 1 - share_underlying
+n_shares <- invest * share_underlying / S0
+n_puts <- invest * share_put / put_price
 asset_value_at_maturity <- prices_scenario_3[N+1,]
 
 # Calculate resulting portfolio values and relative returns
