@@ -7,7 +7,8 @@ library(tidyverse)
 library(zoo)
 library(lubridate)
 library(Metrics)
-
+library(ggplot2)
+library(qrmtools)
 
 
 
@@ -15,13 +16,13 @@ library(Metrics)
 
 #### Parameter ####
 # Risk-free Rate
-r_f <- 0.1
+r_f <- 0.04
 
 # Time frame in years
 time = 1
 
-# Cash to be invested
-cash <- 10000
+# Investment at time. t = 0
+invest <- 10000
 
 # Initial Price of the underlying
 S0 <- 100
@@ -36,7 +37,7 @@ sigma <- 0.16
 N <- 252
 
 # Number of simulated paths of the underlying
-mc.loops <- 10000 
+mc.loops <- 1000
 
 
 
@@ -61,13 +62,34 @@ returns <- (prices[N + 1,] / S0) - 1
 returns <- tibble(returns)
 
 
-#### Histogram of Returns without Portfolio Insurance
+#### Histogram of Returns without Portfolio Insurance ####
 ggplot(returns, aes(returns)) +
     geom_histogram(bins = 200)
 
 
+#### Plot of the different paths our Portfolio ####
+# Preparing the data
+plot_prices_data <- as_tibble(prices) %>% mutate(Index = seq(1:nrow(prices)))
+plot_prices_data <- plot_prices_data %>% pivot_longer(cols = 1:ncol(plot_prices_data)-1, names_to = "Variable", values_to = "Price")
 
-#### Performance Measures ####
+# Plotting the data
+ggplot(plot_prices_data, aes(x = Index, y = Price, color = Variable)) +
+    geom_line() +
+    theme_minimal() +
+    theme(legend.position = "none") +
+    labs(
+        x = "Trading Days",
+        y = "Price of the Underlying",
+        title = "Portfolio Simulation",
+        subtitle = paste("of", mc.loops, "Ensembles and", N, "trading days.")
+    ) +
+    theme(plot.title = element_text(hjust = 0.5),
+          plot.subtitle = element_text(hjust = 0.5)) +
+    scale_color_viridis_d()
+
+
+
+#### Performance Analysis without Risk Management ####
 
 # Value at Risk
 # Lowest Value of the annual relative returns that is not exceeded in 95% of cases.
@@ -109,8 +131,7 @@ cat("Sharpe Ratio:", sharpe_ratio, "\n")
 K <- 110
 
 # Calculate the Put Price
-put_price <- black_scholes_put(S0, K, T, r_f, vol = sigma)
-
+put_price <- black_scholes_put(S0, K, t = time, r_f, vol = sigma)
 
 # Calculate Put Values
 put_values <- calculate_put_values(K = K, asset_values = asset_value_at_maturity)
@@ -123,9 +144,9 @@ share_underlying <- 0.95
 # Share invested into the Put-Options
 share_put <- 1 - share_underlying
 
-# Number of Puts and Underlying that can be bought
-n_shares <- invest * share_underlying / S0
-n_puts <- invest * share_put / put_price
+# Number of Puts and Underlying that can be bought - Only whole assets are trade-able
+n_shares <- floor(invest * share_underlying / S0)
+n_puts <- floor(invest * share_put / put_price) 
 
 # Calculate the hedged portfolio returns
 hedged_portfolio_values <- (asset_value_at_maturity * n_shares + n_puts * put_values)
@@ -154,10 +175,7 @@ cat("Sharpe Ratio:", round(sharpe_ratio, 4), "\n")
 
 
 #### Analyze different combinations -----------
-
-
 # Variable Initialization
-invest <- 10000
 share_underlyings <- seq(0.01, 1.00, 0.01)
 
 # Create an empty data frame to store results
@@ -177,12 +195,6 @@ impact_fractions <- data.frame(
     "Sharpe Ratio" = numeric()
 )
 
-bs_put_price <- function(S0, K, r, vol, T) {
-    d1 <- (log(S0/K) + (r + (vol^2)/2) * T) / (vol * sqrt(T))
-    d2 <- d1 - vol * sqrt(T)
-    put_price <- (K * exp(-r * T) * pnorm(-d2)) - (S0 * pnorm(-d1))
-    return(put_price)
-}
 
 # Loop through different share fractions
 for (i in 1:length(share_underlyings)) {
@@ -190,7 +202,7 @@ for (i in 1:length(share_underlyings)) {
     curr_share_put <- 1 - curr_share_underlying
     
     curr_n_shares <- invest * curr_share_underlying / S0
-    curr_n_puts <- invest * curr_share_put / bs_put_price(S0, K, r_f, sigma, T)
+    curr_n_puts <- invest * curr_share_put / black_scholes_put(S0, K, r_f, sigma, T)
     
     hedged_portfolio_values <- (curr_n_shares * asset_value_at_maturity + curr_n_puts * put_values)
     hedged_portfolio_returns <- (hedged_portfolio_values / invest) - 1
@@ -208,7 +220,7 @@ for (i in 1:length(share_underlyings)) {
     curr_df <- data.frame(
         "Strike Price" = K,
         "Share Price" = round(S0, 4),
-        "Put Price" = round(bs_put_price(S0, K, r, sigma, T), 4),
+        "Put Price" = round(black_scholes_put(S0, K, r, sigma, T), 4),
         "Share Fraction" = round(curr_share_underlying, 4),
         "Put Fraction" = round(curr_share_put, 4),
         "N Shares" = round(curr_n_shares, 4),
@@ -228,17 +240,17 @@ for (i in 1:length(share_underlyings)) {
 ggplot(impact_fractions, aes(x = Share.Fraction, y = Sharpe.Ratio)) +
     geom_line() +
     labs(title = "Share Fraction vs Sharpe Ratio",
-         x = "Share Fraction",
+         x = "Share Underlying",
          y = "Sharpe Ratio") +
     theme_minimal() +
     theme(text = element_text(family = "Georgia"))
 
 
 
+
+
 ## Analyze the Impact of the strike Price
-
-
-strikes <- seq(900, 1500, 10)
+strikes <- seq(90, 150, 10)
 impact_strikes <- data.frame(
     "Strike Price" = numeric(),
     "Share Price" = numeric(),
@@ -255,11 +267,12 @@ impact_strikes <- data.frame(
     "Sharpe Ratio" = numeric()
 )
 
+
 # Loop over the different Strike Values as before but now we must also calculate the put_price and the put_values for every strike
 
 for (i in 1:length(strikes)) {
     K <- strikes[i]
-    put_price <- bs_put_price(S0, K, r, sigma, T)
+    put_price <- black_scholes_put(S0, K, r, sigma, T)
     strike_diff <- K - asset_value_at_maturity
     put_values <- pmax(strike_diff, 0)
     
@@ -310,27 +323,15 @@ ggplot(impact_strikes, aes(x = `Strike.Price`, y = `Sharpe.Ratio`)) +
 
 
 
-##### Exercise 9 ####------------------------------------------------
 
-# Stress Scenario Analysis
 
+#### Stress Scenario Analysis ####
 # Parameter
-
-N <- 252
-K <- 1200
 share_underlying <- 0.95
-S0 <- data$Price[length(data$Price)]
-T <- 1
-
-# Normal
-
-sigma <- 0.11
-
-
-
 
 #### Scenario 1 ############
 # Shock of 20% and a Volatility of -5%
+sigma <- 0.11
 
 
 # Unhedged Portfolio
@@ -342,7 +343,7 @@ sigma <- 0.11     # volatility (%)
 
 
 # Put Price Normal
-put_price <- bs_put_price(S0, K, r, sigma, T)
+put_price <- black_scholes_put(S0, K, r, sigma, T)
 
 prices_scenario_1 <- matrix(nrow = N+1, ncol = mc.loops)
 
@@ -421,7 +422,7 @@ sigma <- 0.21     # volatility (%)
 
 
 # Put Price Normal
-put_price <- bs_put_price(S0, K, r, sigma, T)
+put_price <- black_scholes_put(S0, K, r, sigma, T)
 
 prices_scenario_2 <- matrix(nrow = N+1, ncol = mc.loops)
 
@@ -499,7 +500,7 @@ sigma <- 0.16     # volatility (%)
 
 
 # Put Price Normal
-put_price <- bs_put_price(S0, K, r, sigma, T)
+put_price <- black_scholes_put(S0, K, r, sigma, T)
 
 prices_scenario_3 <- matrix(nrow = N+1, ncol = mc.loops)
 
