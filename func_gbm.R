@@ -9,9 +9,9 @@
 # T = time in years
 # @return vektor of length (N+1) with prices at (i*T/N) for i=0..N.
 
-gbm <- function(S0, mu, sigma, T, N) {
+gbm <- function(S0, mu, sigma, time, N) {
     # time interval, grid size
-    dt <- T/N
+    dt <- time/N
     
     S_t <- numeric(N+1)
     S_t[1] <- S0

@@ -28,16 +28,16 @@ invest <- 10000
 S0 <- 100
 
 # Expected Return - MSCI EM has a roughly 9% annualized return since its inception
-mu <- 0.09 
+mu <- 0.10 
 
 # Volatility of the underlying
-sigma <- 0.16 
+sigma <- 0.20
 
 # Number of time steps per year
 N <- 252
 
 # Number of simulated paths of the underlying
-mc.loops <- 1000
+mc.loops <- 100
 
 
 
@@ -363,6 +363,31 @@ prices_scenario_1 <- rbind(prices_pre_shock_1, prices_after_shock_1)
 put_values <- calculate_put_values(K = K, asset_values = prices_scenario_1[N+1, ])
 
 
+
+
+plot_data_scenario_1 <- as_tibble(prices_scenario_1) %>% mutate(Index = seq(1:nrow(prices_scenario_1))) %>% pivot_longer(
+    cols = 1:ncol(prices_scenario_1),
+    names_to = "Variable",
+    values_to = "Price"
+)
+plot_data_scenario_1 %>% ggplot(aes(x = Index, y = Price, color = Variable)) +
+    geom_line() +
+    theme_minimal() +
+    theme(legend.position = "none") +
+    labs(
+        x = "Trading Days",
+        y = "Price of the Underlying",
+        title = "Portfolio Simulation",
+        subtitle = paste("of", mc.loops, "Ensembles and", N, "trading days.")
+    ) +
+    theme(plot.title = element_text(hjust = 0.5),
+          plot.subtitle = element_text(hjust = 0.5)) +
+    scale_color_viridis_d()
+
+
+
+
+
 # Hedged Portfolio
 
 # Calculate number of shares and options according to investment amount, share fraction, and stock/put prices
@@ -492,43 +517,57 @@ cat("Realized Volatility:", round(realized_volatility * 100, 4), "%\n")
 cat("Sharpe Ratio:", round(sharpe_ratio, 4), "\n")
 
 
+############################################################
+library(tidyverse)
+library(ggplot2)
+source("func_gbm.R")
+source("func_put_bsm.R")
+source("func_put_values.R")
+# Calculate shock scenario
+N <- 252
+time <- 1
+sigma <- 0.20     # volatility (%)
+K <- 100 # at the money
+mc.loops <- 100000
+S0 <- 100 # Number of simulated paths of the underlying
+r <- 0.01
+invest <- 1
+mu <- 0.1
+prices <- matrix(nrow = N + 1, ncol = mc.loops)
 
-#### Scenario 3 #####
-# Shock of 20% and a Volatility of +5%
+set.seed(42)
+# Monte Carlo Simulation
+for (i in 1:mc.loops) {
+    prices[, i] <- gbm(S0 = S0, mu = mu, sigma = sigma, time = time, N = N)
+}
 
-sigma <- 0.16     # volatility (%)
+#prices_pre_shock_3 <- prices[1:(length(prices[,1])/2), ]
+#prices_after_shock_3 <- prices[(length(prices[,1])/2):length(prices[, 1]), ] * 1
 
+#prices <- rbind(prices_pre_shock_3, prices_after_shock_3)
+###------------------------------------------------------------------------------
+
+
+## Analysis for the Portfolios - Koziol Learn@Lunch ###############################################################----------------------- 
 
 # Put Price Normal
 put_price <- black_scholes_put(S0, K, r, sigma, T)
 
-prices_scenario_3 <- matrix(nrow = N+1, ncol = mc.loops)
 
-# Monte Carlo Simulation
-for (i in 1:mc.loops) {
-    prices_scenario_3[, i] <- gbm(S0 = S0, mu = mu, sigma = sigma, T = time, N = N)
-}
+
+# Calculate the Put Values
+put_values <- calculate_put_values(K = K, asset_values = prices[N + 1, ])
 
 
 
-# Calculate shock scenario
-
-prices_pre_shock_3 <- prices_scenario_3[1:(length(prices_scenario_3[,1])/2), ]
-prices_after_shock_3 <- prices_scenario_3[(length(prices_scenario_3[,1])/2):length(prices_scenario_3[, 1]), ] * 0.8
-
-prices_scenario_3 <- rbind(prices_pre_shock_3, prices_after_shock_3)
-put_values <- calculate_put_values(K = K, asset_values = prices_scenario_3[N+1, ])
-
-
-# Hedged Portfolio
+#### Hedged Portfolio ####
 
 # Calculate number of shares and options according to investment amount, share fraction, and stock/put prices
-invest <- 10000
-share_underlying <- 0.95
+share_underlying <- 0.92
 share_put <- 1 - share_underlying
 n_shares <- invest * share_underlying / S0
 n_puts <- invest * share_put / put_price
-asset_value_at_maturity <- prices_scenario_3[N+1,]
+asset_value_at_maturity <- prices[N + 1,]
 
 # Calculate resulting portfolio values and relative returns
 hedged_portfolio_values <- asset_value_at_maturity * n_shares + n_puts * put_values
@@ -536,7 +575,7 @@ hedged_portfolio_returns <- (hedged_portfolio_values / invest) - 1
 
 # Plot Return Distribution
 ggplot(data = data.frame(Returns = hedged_portfolio_returns * 100), aes(x = Returns)) +
-    geom_histogram(binwidth = 0.2, color = 'grey', fill = "darkorange") +
+    geom_histogram(binwidth = 0.2, color = 'grey') +
     labs(title = "Return Distribution of Hedged Portfolio",
          x = "Returns (%)",
          y = "Frequency") +
@@ -549,23 +588,68 @@ ggplot(data = data.frame(Returns = hedged_portfolio_returns * 100), aes(x = Retu
 var_95 <- quantile(hedged_portfolio_returns, 0.05)
 var_99 <- quantile(hedged_portfolio_returns, 0.01)
 
-# Quartile Range
-quartile_range <- quantile(hedged_portfolio_returns, 0.75) - quantile(hedged_portfolio_returns, 0.25)
-
-# Expected Returns
-expected_return <- mean(hedged_portfolio_returns)
-
 # Realized Volatility
 realized_volatility <- sd(hedged_portfolio_returns)
-
-# Sharpe Ratio
-sharpe_ratio <- (expected_return - r) / realized_volatility
 
 # Print Results
 cat("VaR 95%:", round(var_95 * 100, 2), "%\n")
 cat("VaR 99%:", round(var_99 * 100, 2), "%\n")
-cat("Quartile Range:", round(quartile_range, 4), "\n")
-cat("Expected Returns:", round(expected_return * 100, 4), "%\n")
 cat("Realized Volatility:", round(realized_volatility * 100, 4), "%\n")
-cat("Sharpe Ratio:", round(sharpe_ratio, 4), "\n")
+
+
+#### Unhedged Portfolio ####
+
+# Calculate number of shares and options according to investment amount, share fraction, and stock/put prices
+share_underlying <- 1
+n_shares <- invest * share_underlying / S0
+asset_value_at_maturity <- prices[N+1,]
+
+# Calculate resulting portfolio values and relative returns
+unhedged_portfolio_values <- asset_value_at_maturity * n_shares
+unhedged_portfolio_returns <- (unhedged_portfolio_values / invest) - 1
+
+# Plot Return Distribution
+ggplot(data = data.frame(Returns = unhedged_portfolio_returns * 100), aes(x = Returns)) +
+    geom_histogram(binwidth = 0.2, color = 'grey') +
+    labs(title = "Return Distribution of Unhedged Portfolio",
+         x = "Returns (%)",
+         y = "Frequency") +
+    theme_minimal() +
+    theme(text = element_text(family = "Georgia")) +
+    NULL
+
+# Performance and Risk Measures (With Risk Management)
+# Value at Risk (VaR) - 95%
+var_95 <- quantile(unhedged_portfolio_returns, 0.05)
+var_99 <- quantile(unhedged_portfolio_returns, 0.01)
+
+# Realized Volatility
+realized_volatility <- sd(unhedged_portfolio_returns)
+realized_volatility
+
+
+
+plot_data <- tibble("Hedged_Portfolio" = hedged_portfolio_returns, "Unhedged_Portfolio" = unhedged_portfolio_returns) %>%
+    pivot_longer(cols = 1:2, names_to = "Portfolio_Typ", values_to = "Return")
+
+ggplot(data = plot_data, mapping = aes(x = Return * 100, fill = Portfolio_Typ)) +
+    geom_density(alpha = 0.25) +
+    theme_minimal() +
+    labs(title = "Portfolio Returns Distributions",
+         x = "Returns in %",
+         y = "Density",
+         fill = "Portfolio:") +
+    theme_minimal() +
+    theme(text = element_text(family = "Georgia"), 
+          plot.title = element_text(hjust = 0.5, size = 20),
+          plot.subtitle = element_text(hjust = 0.5),
+          legend.position = c(.85, .925),
+          legend.justification = c("right", "top"),
+          legend.box.just = "right",
+          legend.margin = margin(6, 6, 6, 6),
+          legend.title = element_text(face = "bold", size = 15),
+          legend.text = element_text(size = 13),
+          axis.text = element_text(size = 12),
+          axis.title = element_text(size = 13)) +
+    scale_fill_manual(values = c("#A11E22", "#37AFA9"), labels = c("Stocks + Put Option", "Stocks"))
 
